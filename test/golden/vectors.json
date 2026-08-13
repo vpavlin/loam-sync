@@ -1,0 +1,6 @@
+{
+  "note": "Frozen cross-language parity anchors (ADR 0005, docs/PARITY.md).",
+  "fingerprint": [
+    { "ids": ["a", "b"], "hex": "03e804547dd32e9b71f0d2c78a1279a6" }
+  ]
+}
