@@ -59,21 +59,41 @@ Idempotent, commutative, associative. `mergeOne(log, e)` is the in-place form, r
 
 The byte layout of the fingerprint is frozen (0005); golden vectors pin it.
 
-## 5. Catch-up protocol (v1)
+## 5. Catch-up protocol (v2 — recursive RBSR)
 
-Control envelope `SYNC_REQ` — never folded, never stored.
+Control envelope `SYNC_REQ` carries a reconciliation message — never folded, never
+stored. Every message is single-segment (a bounded set of fingerprints or ids), which
+is mandatory: the delivery module can't encrypt multi-segment channel sends (ADR 0004).
 
-- **Request:** `buildRequest(myLog) = { have: [id, …] }`.
-- **Answer:** `answerRequest(myLog, req)`:
-  - `serve = myLog filter (id ∉ req.have)` — publish these to the requester.
-  - `iLack = req.have filter (id ∉ myLog ids)` — publish our own `SYNC_REQ` if non-empty.
-- A fresh requester sends `have: []` and receives the whole log.
+Ordering for ranges is by **id alone** (unique ⇒ a valid total order); bounds are one id.
 
-**Trigger (app-owned):** publish the request at **0, 3, 10, 25 s** after the node is
-ready (the mesh needs ~10 s to form; a single early request is lost). Idempotent.
+Message types:
+```
+"fp"   { from, lo?, hi?, bounds:[id…], fps:[hex…] }   (lo,hi] split into fps.length
+                                                      sub-ranges, fingerprint each
+"ids"  { from, lo?, hi?, ids:[id…] }                  exact ids in a small range
+"need" { from, ids:[id…] }                            serve exactly these events
+```
 
-**Response rate-limit (app-owned):** at most one `answerRequest` serve per channel per
-~3 s, so overlapping requests can't flood. Receiver dedups by id regardless.
+- `buildInitial(myLog, from, buckets=8)` → an `fp` message over the whole range.
+- `respond(myLog, msg, me, threshold=8, buckets=8)` → `{ replies, serve }`:
+  - `fp`: for each sub-range, if my fingerprint matches → drop; else if `|mine| ≤
+    threshold` → reply `ids` (mine); else → reply `fp` over sub-buckets.
+  - `ids`: `serve` = my events in range the peer lacks; reply `need` for ids I lack.
+  - `need`: `serve` = exactly those events I hold.
+  - ignore `msg.from == me`.
+- Fingerprint = order-independent XOR of `SHA-256(id)` folded with count (§4), so peers
+  holding the same ids in a range always agree.
+
+**Convergence:** the symmetric difference strictly shrinks each round → terminates. A
+fresh peer recurses down to receive everything; a slightly-behind peer recurses only
+into the changed range. Empirically single-segment throughout (≤ ~400 B for a 200-event
+log).
+
+**Trigger (app-owned):** publish `buildInitial` at **0, 3, 10, 25 s** after the node is
+ready (the mesh needs ~10 s to form; a single early message is lost). Idempotent.
+
+**Broadcast-tolerant:** `from` gives self-ignore; serves are idempotent (dedup by id).
 
 ## 6. What the app supplies
 

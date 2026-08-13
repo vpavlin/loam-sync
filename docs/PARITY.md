@@ -11,7 +11,7 @@ like a dead network. So parity is **enforced**, not assumed (ADR 0005).
 2. **HLC comparison** — `compareHlc`.
 3. **RBSR fingerprint** — `SHA-256(id)` XOR-fold, then `SHA-256(acc ‖ uint32_be(count))[0..16]`.
 4. **reconcile diff** — `aNeeds` / `bNeeds` for the same two sets.
-5. **catch-up** — `answerRequest.serve` / `iLack` for the same log + request.
+5. **catch-up** — `respond().serve` / `replies` for the same log + message.
 
 ## How it's checked
 

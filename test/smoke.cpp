@@ -33,21 +33,55 @@ int main() {
     auto same = rbsr::reconcile(rbsr::toItems(m1), rbsr::toItems(m1));
     assert(same.aNeeds.empty() && same.bNeeds.empty());
 
-    // ---- catch-up: serve only the complement, and detect what we lack ----
-    // Server has the merged log {a,b,c}; requester has only {a} → server serves {b,c}
-    // and notices nothing missing on its side.
-    std::vector<Event> requesterHas{ev("a", 1, "d1")};
-    auto req = catchup::buildRequest(requesterHas);
-    auto ans = catchup::answerRequest(m1, req);
-    assert(ans.serve.size() == 2);                       // b, c (not a)
-    assert(ans.iLack.empty());
-    // Fresh requester (empty) → whole log.
-    auto fresh = catchup::answerRequest(m1, catchup::buildRequest({}));
-    assert(fresh.serve.size() == 3);
-    // Requester holds an id the server lacks → server should pull it.
-    std::vector<Event> reqHasExtra{ev("a", 1, "d1"), ev("z", 9, "d3")};
-    auto ans2 = catchup::answerRequest(m1, catchup::buildRequest(reqHasExtra));
-    assert(ans2.iLack.size() == 1 && ans2.iLack[0] == "z");
+    // ---- catch-up v2: recursive RBSR converges two peers via message passing ----
+    // Simulate the on-wire exchange between peer A and peer B over a broadcast
+    // channel until quiescent, then assert BOTH hold the union — and that every
+    // message stayed tiny (single-segment) even for a large log.
+    auto converge = [](std::vector<Event> A, std::vector<Event> B) {
+        size_t maxMsgBytes = 0;
+        std::vector<json> toB{ catchup::buildInitial(A, "A") };
+        std::vector<json> toA;
+        for (auto& m : toB) maxMsgBytes = std::max(maxMsgBytes, m.dump().size());
+        for (int round = 0; round < 64 && (!toA.empty() || !toB.empty()); round++) {
+            std::vector<json> nA, nB;
+            for (auto& m : toB) {                          // messages addressed to B
+                auto s = catchup::respond(B, m, "B");
+                for (auto& e : s.serve) mergeOne(A, e);     // B broadcasts → A receives
+                for (auto& r : s.replies) { nA.push_back(r); maxMsgBytes = std::max(maxMsgBytes, r.dump().size()); }
+            }
+            for (auto& m : toA) {                          // messages addressed to A
+                auto s = catchup::respond(A, m, "A");
+                for (auto& e : s.serve) mergeOne(B, e);     // A broadcasts → B receives
+                for (auto& r : s.replies) { nB.push_back(r); maxMsgBytes = std::max(maxMsgBytes, r.dump().size()); }
+            }
+            toA = nA; toB = nB;
+        }
+        std::set<std::string> ia, ib;
+        for (auto& e : A) ia.insert(e.id);
+        for (auto& e : B) ib.insert(e.id);
+        return std::make_tuple(ia, ib, maxMsgBytes);
+    };
+
+    // 1) fresh peer (empty) vs a peer with {a,b,c}
+    {
+        auto [ia, ib, mb] = converge({}, m1);
+        assert(ia.size() == 3 && ib.size() == 3 && ia == ib);   // both hold the union
+        printf("v2 fresh-join: both converged to %zu events, max msg %zu B\n", ia.size(), mb);
+    }
+    // 2) two partially-overlapping peers, LARGE log — check convergence AND that no
+    //    message ever segments (stays well under a Waku segment ~a few hundred B).
+    {
+        std::vector<Event> A, B;
+        for (int i = 0; i < 200; i++) { char id[8]; snprintf(id, 8, "e%03d", i); A.push_back(ev(id, i, "dA")); }
+        B = A;                                    // start equal…
+        A.push_back(ev("x-late", 1, "dA"));       // …A authored 2 offline
+        A.push_back(ev("y-late", 2, "dA"));
+        B.push_back(ev("z-late", 3, "dB"));       // …B authored 1 offline
+        auto [ia, ib, mb] = converge(A, B);
+        assert(ia.size() == 203 && ib.size() == 203 && ia == ib);   // exact 3-way delta
+        assert(mb < 900);                                            // every message single-segment
+        printf("v2 large+behind: 200-event logs converged to %zu (delta=3), max msg %zu B\n", ia.size(), mb);
+    }
 
     // ---- fingerprint determinism (parity anchor) ----
     auto fpA = rbsr::fingerprint(rbsr::toItems(a));

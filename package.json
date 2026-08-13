@@ -1,6 +1,6 @@
 {
   "name": "logos-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared, transport-agnostic sync engine for multi-writer Logos apps — event-log CRDT + HLC + RBSR reconciliation + catch-up protocol.",
   "type": "module",
   "main": "src/index.ts",

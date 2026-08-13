@@ -1,4 +1,4 @@
-# 4. The catch-up protocol: summarise, then serve the delta
+# 4. The catch-up protocol: recursive set reconciliation
 
 - **Status:** accepted
 - **Date:** 2026-08-13
@@ -6,51 +6,62 @@
 ## Context
 
 0003 decided *what* to transfer (only the difference). This ADR fixes *how* the peers
-talk — the wire protocol that rides the app's normal sealed send/receive, plus the
-two operational rules that make it actually deliver history in a gossip mesh.
+talk. There is a hard transport constraint that shapes the answer: the delivery
+module **fails to encrypt multi-segment channel sends** (`no provider registered for
+input signature … one or more segments failed`). So **every protocol message must fit
+in a single segment** (a few hundred bytes) — a message that grows with the log is not
+allowed on the wire at all.
+
+## What we tried first (and rejected)
+
+**v1 — "summarise then serve the complement":** the requester puts its entire id-list
+in one `SYNC_REQ`; the server serves `myLog \ have`. Simple, and the *downstream* is
+minimal. But the *request itself* is O(N) and **segments** for even ~15 events — so it
+literally cannot be sent. v1 was implemented, hit the wall in testing on the hub, and
+is superseded here.
 
 ## Decision
 
-**v1, single round, "summarise then serve the complement":**
+**v2 — recursive Range-Based Set Reconciliation on the wire.** Peers exchange bounded
+range statements over the sorted (by id) id-set:
 
-1. On join/reconnect, a peer publishes a **`SYNC_REQ`** carrying `buildRequest(myLog)`
-   = `{ have: [id, …] }` — the ids it already holds for the channel.
-2. Every peer that receives it runs `answerRequest(myLog, req)`:
-   - `serve` = the events the requester lacks → **publish just those**;
-   - `iLack` = ids the requester listed that *we* don't have → **we publish our own
-     `SYNC_REQ`**.
-   Rule (2) is what makes one request converge **both** peers: the joiner pulls
-   history, and anything the joiner authored offline pulls back to everyone else.
-3. A fresh peer sends `have: []` and receives the whole log once; a peer slightly
-   behind receives only its gap.
+```
+"fp"   { from, lo, hi, bounds:[id…], fps:[hex…] }   range (lo,hi] split into fps.length
+                                                    sub-ranges, one fingerprint each
+"ids"  { from, lo, hi, ids:[id…] }                  my exact ids in a small range
+"need" { from, ids:[id…] }                          serve me exactly these events
+```
 
-`SYNC_REQ` is a control message — it is **never folded into state** and never stored
-(the app's fold ignores its type).
+- A joining/reconnecting peer publishes an `fp` message over the whole range
+  (`buildInitial`, `buckets` fingerprints).
+- `respond(myLog, msg)` is a **pure** step: a range whose fingerprints agree is
+  dropped; a large disagreeing range is answered with sub-range `fp`s; a small one
+  drops to an `ids` list. From a received `ids` list a peer serves exactly what the
+  peer lacks and replies `need` for exactly what it lacks. The app publishes the
+  returned messages/events (sealed, over logos-transport) and ignores its own `from`.
+- **Every message is bounded** — `buckets` fingerprints, or ≤ `threshold` ids — so it
+  is always a single segment. Measured: a 200-event log with a 3-event delta converges
+  in a handful of messages, **max message 375 bytes**.
+- **Convergence:** fingerprint agreements drop ranges, splits shrink them, `ids`/`need`
+  exchanges transfer the exact missing events — the symmetric difference strictly
+  shrinks each round, so it terminates. A fresh peer (empty set) disagrees on the whole
+  range and recurses down to receive everything; a peer two minutes behind recurses
+  only into the one range that changed.
 
-### Two operational rules (or it silently delivers nothing)
+### Operational rules (or it silently delivers nothing)
 
-- **Trigger on a timer, not once.** The node finishes `start()` *before* the gossip
-  mesh has peers (~10 s to form) and before the async subscribe/channel-join have
-  landed. A single `SYNC_REQ` fired at "ready" goes into the void. Re-send at
-  **0 / 3 / 10 / 25 s** after ready (mobile already does this; it is exactly the bug
-  that left Scala's desktop never catching up). Idempotent, so retries are safe.
-- **Rate-limit the response.** Overlapping `SYNC_REQ`s (several peers joining, or a
-  retrying joiner) must not restack full serves into a flood; cap `answerRequest`
-  responses per channel (e.g. one per 3 s). Dedup-by-id on the receiver makes any
-  extra serve harmless anyway.
-
-## Alternatives rejected
-
-- **Push-only periodic re-broadcast** (0003) — unbounded waste, no per-peer targeting.
-- **One-shot request at `onReady`** — the precise defect being fixed; races the mesh.
-- **A dedicated request/response RPC channel** — unnecessary; the existing sealed
-  channel carries `EVENT` and `SYNC_REQ` envelopes fine, and reusing it keeps the
-  transport contract tiny.
+- **Trigger on a timer, not once.** The mesh needs ~10 s to form after `start()`; a
+  single message at "ready" is lost. Re-send `buildInitial` at **0 / 3 / 10 / 25 s**.
+  Idempotent — the reconciliation just re-runs and finds agreement.
+- **Broadcast-tolerant.** Messages carry `from` for self-ignore; serves are idempotent
+  (dedup by id). Over a channel with a few peers the redundant responses damp out as
+  ranges reach agreement.
 
 ## Consequences
 
-- Backfill is **on-demand and bidirectional**; no steady-state traffic.
+- Backfill is **on-demand, bidirectional, id-exact, and always single-segment** — no
+  steady-state traffic, no segmentation wall, no whole-log re-broadcast.
 - The app owns the **trigger** (node lifecycle) and the **transport** (seal + publish);
-  logos-sync owns the **decision** (`buildRequest` / `answerRequest`). Clean seam.
-- v2 swaps the `have: [id]` list for RBSR fingerprints (0003) behind the same two
-  functions — apps don't change.
+  logos-sync owns the **decision** (`buildInitial` / `respond`). Clean seam.
+- `threshold`/`buckets` trade round count against message size; the defaults (8/8) keep
+  messages a few hundred bytes and depth ≈ log₈(N).

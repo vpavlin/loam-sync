@@ -36,13 +36,15 @@ if (mergeOne(myLog, in)) clock.receive(in.hlc);  // true == new → persist + fo
 
 // 3. Fold to state (YOUR code): computeState(myLog) → whatever your view needs.
 
-// 4. Catch-up REQUEST (on join/reconnect, retried 0/3/10/25s):
-transport.publish(topic, seal(syncReqEnvelope(catchup::buildRequest(myLog))));
+// 4. Catch-up: on join/reconnect (retried 0/3/10/25s), publish an initial
+//    reconciliation message (bounded, single-segment):
+transport.publish(topic, seal(syncEnvelope(catchup::buildInitial(myLog, myId))));
 
-// 5. Catch-up ANSWER (on receiving a SYNC_REQ):
-auto ans = catchup::answerRequest(myLog, req);
-for (auto& e : ans.serve) transport.publish(topic, seal(eventToJson(e)));  // rate-limit ~3s
-if (!ans.iLack.empty()) /* publish our own buildRequest(myLog) */;
+// 5. On receiving a SYNC message, step the state machine: serve exact events +
+//    publish the reply reconciliation messages (all single-segment).
+auto step = catchup::respond(myLog, msg, myId);
+for (auto& e : step.serve)   transport.publish(topic, seal(eventToJson(e)));
+for (auto& r : step.replies) transport.publish(topic, seal(syncEnvelope(r)));
 ```
 
 `SYNC_REQ` is a control envelope — route it to `answerRequest`, never into your fold.

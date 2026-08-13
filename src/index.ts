@@ -5,4 +5,4 @@
 export { type HLC, type Event, compareHlc, Clock } from "./event.js";
 export { mergeEvents, mergeOne } from "./merge.js";
 export { type Item, type Diff, toItems, reconcile, fingerprintIds } from "./reconcile.js";
-export { type Answer, buildRequest, answerRequest } from "./catchup.js";
+export { type CatchupMsg, type Step, buildInitial, respond } from "./catchup.js";
