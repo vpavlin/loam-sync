@@ -15,6 +15,11 @@ export interface Event {
   hlc: HLC;
   dev: string; // author device id (== hlc.dev)
   payload: unknown; // app-defined; the engine never inspects it
+  // Optional authenticity layer (docs/adr/0008): pub = author's 33B secp256k1 public
+  // key (hex), sig = 64B ECDSA over the canonical event. Absent on legacy/unsigned
+  // events, which stay first-class. Outside the signed canonical (see signing.ts).
+  pub?: string;
+  sig?: string;
 }
 
 /** Total order: wall → ctr → dev. Identical on every replica. */

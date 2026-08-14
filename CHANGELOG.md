@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0 — 2026-08-14
+- **event authenticity (signing) landed — ADR 0008, was design-only.** Optional
+  secp256k1 layer proving WHO authored an event; verification is public-key only and
+  the library never holds a private key — signing is delegated through an injected
+  `Signer` seam (a `SoftwareSigner` today, a `KeycardSigner` tomorrow — same digest,
+  same code path). C++ (OpenSSL) + TS (@noble/curves v1, the Hermes-proven stack).
+- **event** — optional `pub`/`sig` fields added to the envelope (unsigned events stay
+  first-class). Reconciles the drift where Scala's vendored copy had run ahead.
+- **signing** — new `signing.hpp` / `signing.ts`: `canonicalMessage(domain, ev)`,
+  `address(pub33)` = `0x`+sha256(pub)[24:64], `signEvent` / `verifyEvent` / `isSigned`,
+  parameterised by a per-app `domain` tag (no hardcoded `scala-`).
+- **parity** — signing anchors frozen in `test/golden/vectors.json` (priv→pub/address,
+  canonical, digest, deterministic sig). Cross-verified both ways: OpenSSL verifies
+  @noble's frozen sig and vice-versa, plus 4 tamper cases rejected on each side. sig is
+  NOT byte-compared (OpenSSL uses random k, @noble RFC-6979) — the gate is verify.
+- Depends on `@noble/curves ^1.9.7` (matches Scala mobile; v2 needs `{prehash:false}`
+  and misbehaves on Hermes — ADR 0008).
+
 ## 0.2.0 — 2026-08-13
 - **catchup rewritten to v2 — recursive Range-Based Set Reconciliation on the wire.**
   v1 (ship the whole id-list, serve the complement) segmented for even ~15 events and

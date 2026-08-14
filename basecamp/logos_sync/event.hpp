@@ -46,13 +46,21 @@ struct Event {
     HLC hlc;
     std::string dev;       // author device id (== hlc.dev; kept for convenience)
     json payload;
+    // Optional authenticity layer (docs/adr/0008): pub = author's 33B secp256k1 public
+    // key (hex), sig = 64B ECDSA over the canonical event. Empty on legacy/unsigned
+    // events, which stay first-class. Outside the signed canonical (see signing.hpp).
+    std::string pub;
+    std::string sig;
 };
 
 inline json eventToJson(const Event& e) {
-    return json{
+    json j{
         {"v", e.v}, {"id", e.id}, {"type", e.type},
         {"hlc", {{"wall", e.hlc.wall}, {"ctr", e.hlc.ctr}, {"dev", e.hlc.dev}}},
         {"dev", e.dev}, {"payload", e.payload}};
+    if (!e.pub.empty()) j["pub"] = e.pub;
+    if (!e.sig.empty()) j["sig"] = e.sig;
+    return j;
 }
 
 inline Event eventFromJson(const json& j) {
@@ -67,6 +75,8 @@ inline Event eventFromJson(const json& j) {
     }
     e.dev     = j.value("dev", std::string());
     e.payload = j.contains("payload") ? j["payload"] : json::object();
+    e.pub     = j.value("pub", std::string());
+    e.sig     = j.value("sig", std::string());
     return e;
 }
 

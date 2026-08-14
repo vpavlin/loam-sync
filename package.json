@@ -1,6 +1,6 @@
 {
   "name": "logos-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared, transport-agnostic sync engine for multi-writer Logos apps — event-log CRDT + HLC + RBSR reconciliation + catch-up protocol.",
   "type": "module",
   "main": "src/index.ts",
@@ -8,6 +8,9 @@
     "test": "node test/convergence.test.mjs",
     "test:cpp": "bash test/run.sh"
   },
-  "dependencies": { "@noble/hashes": "^1.4.0" },
+  "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.4.0"
+  },
   "license": "(MIT OR Apache-2.0)"
 }

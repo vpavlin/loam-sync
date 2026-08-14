@@ -1,6 +1,61 @@
 {
   "note": "Frozen cross-language parity anchors (ADR 0005, docs/PARITY.md).",
   "fingerprint": [
-    { "ids": ["a", "b"], "hex": "03e804547dd32e9b71f0d2c78a1279a6" }
-  ]
+    {
+      "ids": [
+        "a",
+        "b"
+      ],
+      "hex": "03e804547dd32e9b71f0d2c78a1279a6"
+    }
+  ],
+  "signing": {
+    "note": "secp256k1 event-signing anchors (adr/0008). sig is @noble-deterministic; C++ (OpenSSL random-k) VERIFIES it, does not reproduce it.",
+    "domain": "logos",
+    "priv": "0000000000000000000000000000000000000000000000000000000000000001",
+    "pub": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "address": "0x29e562f73488c8a2bb9dbc5700b361d54b9b0554",
+    "event": {
+      "type": "note.add",
+      "id": "evt-1",
+      "hlc": {
+        "wall": 1700000000000,
+        "ctr": 7,
+        "dev": "PLACEHOLDER"
+      },
+      "payload": {
+        "text": "hello",
+        "tags": [
+          "a",
+          "b"
+        ],
+        "n": 42,
+        "ok": true
+      }
+    },
+    "canonical": "logos-sig-v1|note.add|1700000000000|7|0x29e562f73488c8a2bb9dbc5700b361d54b9b0554|evt-1|{\"n\":42,\"ok\":true,\"tags\":[\"a\",\"b\"],\"text\":\"hello\"}",
+    "digest": "da8b8bf8ddfdb574c8885a572920e072e1bb057b96ac2c2a9dab4344ee470261",
+    "sig": "e022ff11041b6e3c2a7de32fa018142cf1b48d534324585e8a5ebfb527736a9e50225af97bbdf6fab75b9e4c360b9d9c473cf2cd0ecf3131e75981d068d29d9c",
+    "signed": {
+      "type": "note.add",
+      "id": "evt-1",
+      "hlc": {
+        "wall": 1700000000000,
+        "ctr": 7,
+        "dev": "0x29e562f73488c8a2bb9dbc5700b361d54b9b0554"
+      },
+      "payload": {
+        "text": "hello",
+        "tags": [
+          "a",
+          "b"
+        ],
+        "n": 42,
+        "ok": true
+      },
+      "dev": "0x29e562f73488c8a2bb9dbc5700b361d54b9b0554",
+      "pub": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "sig": "e022ff11041b6e3c2a7de32fa018142cf1b48d534324585e8a5ebfb527736a9e50225af97bbdf6fab75b9e4c360b9d9c473cf2cd0ecf3131e75981d068d29d9c"
+    }
+  }
 }

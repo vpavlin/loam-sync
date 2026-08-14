@@ -6,3 +6,9 @@ export { type HLC, type Event, compareHlc, Clock } from "./event.js";
 export { mergeEvents, mergeOne } from "./merge.js";
 export { type Item, type Diff, toItems, reconcile, fingerprintIds } from "./reconcile.js";
 export { type CatchupMsg, type Step, buildInitial, respond } from "./catchup.js";
+// Optional authenticity layer (docs/adr/0008) — off unless you sign. The app owns key
+// storage + RNG and injects a Signer; the library never holds a private key.
+export {
+  type Signer, SoftwareSigner, signEvent, verifyEvent, isSigned,
+  canonicalMessage, address, hex, fromHex, utf8Bytes,
+} from "./signing.js";

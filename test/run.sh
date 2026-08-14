@@ -8,3 +8,5 @@ echo "== C++ smoke =="
 c++ -std=c++17 $INC test/smoke.cpp -lcrypto -o /tmp/logos_sync_smoke && /tmp/logos_sync_smoke
 echo "== TS convergence =="
 node test/convergence.test.mjs
+echo "== TS signing parity =="
+node test/signing.test.mjs

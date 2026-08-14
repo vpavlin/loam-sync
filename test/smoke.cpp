@@ -4,6 +4,7 @@
 #include "../basecamp/logos_sync.hpp"
 #include <cstdio>
 #include <cassert>
+#include <fstream>
 using namespace logos_sync;
 
 static Event ev(const std::string& id, long long wall, const std::string& dev) {
@@ -81,6 +82,47 @@ int main() {
         assert(ia.size() == 203 && ib.size() == 203 && ia == ib);   // exact 3-way delta
         assert(mb < 900);                                            // every message single-segment
         printf("v2 large+behind: 200-event logs converged to %zu (delta=3), max msg %zu B\n", ia.size(), mb);
+    }
+
+    // ---- signing parity (adr/0008): read the frozen anchor both langs share ----
+    // sig is @noble-deterministic; OpenSSL uses random k so it can't reproduce it — the
+    // gate is CROSS-VERIFY (OpenSSL verifies @noble's frozen sig) + its own round-trip.
+    {
+        std::ifstream f("test/golden/vectors.json");
+        assert(f && "cannot open test/golden/vectors.json");
+        json V; f >> V;
+        const json& S = V.at("signing");
+        std::string domain = S.at("domain").get<std::string>();
+        Bytes priv = fromHexB(S.at("priv").get<std::string>());
+
+        SoftwareSigner signer(priv);
+        assert(signer.valid);
+        assert(toHexS(signer.pub.data(), signer.pub.size()) == S.at("pub").get<std::string>());
+        assert(address(signer.pub) == S.at("address").get<std::string>());
+
+        // Signing the frozen input reproduces canonical + digest (sig differs: random k).
+        Event e = eventFromJson(S.at("event"));
+        signEvent(signer, domain, e);
+        assert(e.dev == S.at("address").get<std::string>());
+        assert(e.hlc.dev == S.at("address").get<std::string>());
+        assert(canonicalMessage(domain, e) == S.at("canonical").get<std::string>());
+        Bytes dg = sha256b(strBytes(canonicalMessage(domain, e)));
+        assert(toHexS(dg.data(), dg.size()) == S.at("digest").get<std::string>());
+        assert(verifyEvent(domain, e));   // C++'s own signature round-trips
+
+        // CROSS-VERIFY: the frozen @noble (TS) signature verifies under OpenSSL.
+        Event sev = eventFromJson(S.at("signed"));
+        assert(verifyEvent(domain, sev));
+        assert(isSigned(sev));
+        assert(!isSigned(eventFromJson(S.at("event"))));
+
+        // Tamper-detection: any change to a signed field breaks verification.
+        Event t1 = sev; t1.payload["n"] = 43;        assert(!verifyEvent(domain, t1));
+        Event t2 = sev; t2.type = "note.del";        assert(!verifyEvent(domain, t2));
+        Event t3 = sev;                              assert(!verifyEvent("other", t3));
+        Event t4 = sev; t4.hlc.dev = "0x" + std::string(40, '0'); assert(!verifyEvent(domain, t4));
+
+        printf("signing parity: pub/address/canonical/digest match ✓  cross-verify @noble sig ✓  4 tamper cases rejected ✓\n");
     }
 
     // ---- fingerprint determinism (parity anchor) ----

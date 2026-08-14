@@ -14,3 +14,6 @@
 #include "logos_sync/merge.hpp"
 #include "logos_sync/reconcile.hpp"
 #include "logos_sync/catchup.hpp"
+// Optional authenticity layer (docs/adr/0008) — the Signer seam + secp256k1 sign/verify.
+// Pulls in OpenSSL's EC/ECDSA; include it only if you sign (verify needs public keys only).
+#include "logos_sync/signing.hpp"
