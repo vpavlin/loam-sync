@@ -1,5 +1,5 @@
 {
-  "name": "logos-sync",
+  "name": "loam-sync",
   "version": "0.3.0",
   "description": "Shared, transport-agnostic sync engine for multi-writer Logos apps — event-log CRDT + HLC + RBSR reconciliation + catch-up protocol.",
   "type": "module",
