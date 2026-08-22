@@ -149,3 +149,22 @@ receive-based discipline, delete kym's `primeFrom` + the receive bump, rely on `
 loam-sync's Clock needs no change. Do it as its own pass gated on kym's convergence tests (the ordering
 change is behavioral). Also reconcile the API: loam-sync `send(nowMs)` injects the clock; kym injects `now`
 in the ctor.
+
+## PROGRESS — 2026-08-22 (qaku crypto converged + all 3 apps v0.2.0-config-ready)
+
+Following the kym pattern across the ecosystem:
+- **kym**: crypto ✓ (5 surfaces byte-identical), delivery v0.2.0 canonical config ✓ (meshes), on loam_core ✓.
+- **qaku**: crypto ✓ — deterministic nonce across packages/sync (node:crypto) + qaku_core C++ + mobile
+  (@noble v1), all byte-identical to loam-sync deriveIdentity("qaku") (`442f6e52…`); delivery v0.2.0
+  canonical config ✓ (commit 75b2e0f). STILL on `delivery_module` directly — needs the loam_core move +
+  HLC/reconcile/wire port (mirrors kym's remaining steps).
+- **scala**: already on loam-sync (brain) + loam_core (transport); delivery v0.2.0 canonical config ✓
+  (commit 7a2497f). Its AES-GCM cipher → ChaCha/deterministic-nonce is a SEPARATE decision.
+
+**Delivery v0.2.0 meshing SOLVED (was a config shape, not a rebuild):** canonical config is
+`{mode:Core, preset:logos.test, messagingOverrides:{logLevel, tcp-port:30303, discv5-udp-port:9000}}` —
+NO manual entryNodes; discv5 from the preset finds the fleet; `discv5-udp-port` is REQUIRED. v0.2.0 HAS
+reliable channels (added in v0.2.0; released v0.1.3 did not). master = v0.2.0 + a docs commit.
+
+**Crib migration is now unblocked** (all apps mesh v0.2.0): upgrade the crib delivery v0.1.3→v0.2.0, add
+loam_core+ble_mesh, move qaku to loam_core, rebuild+redeploy all — verify in isolation first, coordinated.
