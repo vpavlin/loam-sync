@@ -94,6 +94,16 @@ dedup only pays off when ALL publishers use it, the hub + phone must be redeploy
 Rebuild recipe for later: `nix build .#packages.x86_64-linux.install-portable` → deploy the whole
 `modules/kym_core/` dir (so+manifest+variant+bundled libs; the manifest carries the Merkle hashes).
 
+**DEPLOY PATH VERIFIED in isolation (2026-08-22):** the `kym` logos-hub profile (modulesDir
+`~/loam-hub-test/modules`) has the ABI-aligned set — loam_core v0.1.0 (@e16b69db) + ble_mesh v0.1.0 +
+delivery_module **v0.2.0** (@3258cdb0). Dropped MY crypto kym_core 0.7.5 in → `load kym_core: ok
+{dependencies_loaded:[loam_core,delivery_module,ble_mesh]}`, `addCategory`→snapshot folds it,
+`loam_core metricsJson`→`connected:true, delivery+ble ready, tx:4` (deterministic-nonce seal path ran +
+sent via the facade). So kym-via-loam_core works headless; the crib failure was purely the missing set.
+loam_core owns ONE node THROUGH delivery_module, so the shared-node invariant holds. Remaining risky part
+of the CRIB migration: upgrade its delivery v0.1.3→v0.2.0 (must still mesh the fleet) and re-verify
+qaku_core+scala (they use delivery_module directly), then add loam_core+ble_mesh + load loam_core.
+
 **Not yet a full delete of the mirror:** kym_crypto.hpp is now algorithm-identical to loam-sync
 crypto.hpp but still a separate file (submoduling the header into the nix module build = step 5, deferred).
 **Still ahead:** steps 2 (HLC Clock), 3 (reconcile), 4 (wire retirement), 5 (C++ submodule), then qaku +
