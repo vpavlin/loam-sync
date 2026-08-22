@@ -53,7 +53,10 @@ function cjson(v: any): string {
 export function canonicalMessage(domain: string, ev: any): string {
   const dev = (ev.hlc && ev.hlc.dev) || ev.dev || "";
   const wall = ev.hlc ? ev.hlc.wall : 0, ctr = ev.hlc ? ev.hlc.ctr : 0;
-  return domain + "-sig-v1|" + ev.type + "|" + wall + "|" + ctr + "|" + dev + "|" + ev.id + "|" + cjson(ev.payload || {});
+  // ADR 0017: canonical over the payload AS-IS (no `|| {}` coercion). A null/absent
+  // payload canonicalises to "null" — byte-identical to the C++ cjson(e.payload) —
+  // so a signature verifies across TS and C++ regardless of payload shape.
+  return domain + "-sig-v1|" + ev.type + "|" + wall + "|" + ctr + "|" + dev + "|" + ev.id + "|" + cjson(ev.payload === undefined ? null : ev.payload);
 }
 
 // ── the Signer seam (docs/adr/0008) ──────────────────────────────────────────
@@ -72,20 +75,94 @@ export class SoftwareSigner implements Signer {
   signDigest(d: Uint8Array): Uint8Array { return fromHex(secp256k1.sign(d, this.priv).toCompactHex()); }
 }
 
-// Stamp the event with the signer's address as author (dev + hlc.dev) and sign. Mutates + returns ev.
-export function signEvent(signer: Signer, domain: string, ev: any): Event {
+// An async Signer — same seam, but signDigest may await (a Keycard taps NFC to sign on-card).
+// The library still never holds a key; a hardware backend (loam-keycard) implements this.
+export interface AsyncSigner {
+  publicKey(): Uint8Array;
+  signDigest(digest32: Uint8Array): Promise<Uint8Array>; // 64B low-S compact
+}
+
+// ── delegation certs + custody policy (docs/adr/0009) ────────────────────────
+// Keycard's key never leaves the card. To sign a high-frequency event stream (and to work on
+// a device with no reader), the card identity signs — ON CARD, one tap — a cert authorizing an
+// ephemeral DELEGATE key to author events on its behalf, within bounds. Events then carry
+// (delegate sig + cert); a verifier chains delegate→cert→identity, and the AUTHOR is the card
+// identity, not the delegate. This is one mechanism spanning the whole custody slider:
+//   tap-per-sign — the "delegate" IS the identity key, on-card, no cert (maxSigs≡1)
+//   delegated    — bounded cert (notAfter / maxSigs), re-tap on expiry
+//   exported     — an unbounded cert (notAfter=0) over an exported key (least secure)
+export type CustodyMode = "tap-per-sign" | "delegated" | "exported";
+export interface CustodyPolicy { mode: CustodyMode; ttlMinutes?: number; maxSigs?: number }
+
+export interface DelegationCert {
+  delegatePub: string; // hex compressed 33B — the key that signs the events
+  idPub: string;       // hex compressed 33B — the card identity key (the person)
+  notAfter: number;    // unix ms; 0 = never expires (exported mode)
+  maxSigs: number;     // 0 = unlimited; else max events this delegate may author (FOLD-enforced)
+  scope: string;       // "" = any; else the container id this delegation is limited to (FOLD-enforced)
+  idSig: string;       // secp256k1 sig by idPub over canonicalCert() — issued on-card
+}
+export function canonicalCert(domain: string, c: DelegationCert): string {
+  return domain + "-deleg-v1|" + c.delegatePub + "|" + c.idPub + "|" + c.notAfter + "|" + c.maxSigs + "|" + c.scope;
+}
+// Verify the cert's identity signature and that it had not expired at `atMs`. Does NOT check
+// maxSigs/scope — those are count/scope-dependent and belong in the deterministic fold (the
+// app owns the fold, docs/adr/0007), alongside role gating.
+export function verifyCert(domain: string, c: DelegationCert, atMs: number): boolean {
+  try {
+    if (!c || !c.delegatePub || !c.idPub || !c.idSig) return false;
+    const idPub = fromHex(c.idPub);
+    if (idPub.length !== 33) return false;
+    if (c.notAfter !== 0 && atMs > c.notAfter) return false;
+    const digest = sha256(utf8Bytes(canonicalCert(domain, c)));
+    return secp256k1.verify(fromHex(c.idSig), digest, idPub);
+  } catch { return false; }
+}
+// Issue a cert: the identity signer (the card, on-card) signs the canonical cert. Sync form for
+// a SoftwareSigner; issueCertAsync for a hardware AsyncSigner.
+export function issueCert(idSigner: Signer, domain: string, delegatePub: string, opts?: { notAfter?: number; maxSigs?: number; scope?: string }): DelegationCert {
+  const c: DelegationCert = { delegatePub, idPub: hex(idSigner.publicKey()), notAfter: opts?.notAfter ?? 0, maxSigs: opts?.maxSigs ?? 0, scope: opts?.scope ?? "", idSig: "" };
+  c.idSig = hex(idSigner.signDigest(sha256(utf8Bytes(canonicalCert(domain, c)))));
+  return c;
+}
+export async function issueCertAsync(idSigner: AsyncSigner, domain: string, delegatePub: string, opts?: { notAfter?: number; maxSigs?: number; scope?: string }): Promise<DelegationCert> {
+  const c: DelegationCert = { delegatePub, idPub: hex(idSigner.publicKey()), notAfter: opts?.notAfter ?? 0, maxSigs: opts?.maxSigs ?? 0, scope: opts?.scope ?? "", idSig: "" };
+  c.idSig = hex(await idSigner.signDigest(sha256(utf8Bytes(canonicalCert(domain, c)))));
+  return c;
+}
+
+// Stamp the event with the AUTHOR address (the card identity when delegated, else the signer's
+// own key) and sign with `signer`; attach the cert when delegated. Mutates + returns ev. With
+// no cert this is exactly the pre-delegation behaviour (author = signer address, no `cert`).
+export function signEvent(signer: Signer, domain: string, ev: any, cert?: DelegationCert): Event {
   const pub = signer.publicKey();
-  const addr = address(pub);
-  ev.dev = addr;
-  if (ev.hlc) ev.hlc.dev = addr;
+  const author = cert ? address(fromHex(cert.idPub)) : address(pub);
+  ev.dev = author;
+  if (ev.hlc) ev.hlc.dev = author;
   const digest = sha256(utf8Bytes(canonicalMessage(domain, ev)));
   ev.pub = hex(pub);
   ev.sig = hex(signer.signDigest(digest));
+  if (cert) ev.cert = cert;
+  return ev;
+}
+// Async form for a hardware signer (Keycard tap-per-sign: `signer` is the card identity, no cert).
+export async function signEventAsync(signer: AsyncSigner, domain: string, ev: any, cert?: DelegationCert): Promise<Event> {
+  const pub = signer.publicKey();
+  const author = cert ? address(fromHex(cert.idPub)) : address(pub);
+  ev.dev = author;
+  if (ev.hlc) ev.hlc.dev = author;
+  const digest = sha256(utf8Bytes(canonicalMessage(domain, ev)));
+  ev.pub = hex(pub);
+  ev.sig = hex(await signer.signDigest(digest));
+  if (cert) ev.cert = cert;
   return ev;
 }
 
-// True iff the event is well-signed by the key whose address it claims (dev). Pure,
-// public-key only, never throws — the fold decides policy (docs/adr/0007).
+// True iff the event is well-signed by the key whose address it claims. Pure, public-key only,
+// never throws — the fold decides policy (docs/adr/0007). Cert-aware (docs/adr/0009): with no
+// `cert`, author = address of the signing key (unchanged); with a `cert`, the signing key is a
+// delegate a card identity authorized, and the author is the card identity. A cert-less event
+// verifies exactly as before — the delegation layer is purely additive.
 export function verifyEvent(domain: string, ev: any): boolean {
   try {
     if (!ev || !ev.pub || !ev.sig || !ev.type || !ev.id) return false;
@@ -93,9 +170,20 @@ export function verifyEvent(domain: string, ev: any): boolean {
     if (!dev) return false;
     const pub = fromHex(ev.pub);
     if (pub.length !== 33) return false;
-    if (address(pub) !== dev) return false;
+    // The event body is always signed by ev.pub (the delegate, or the identity key itself).
     const digest = sha256(utf8Bytes(canonicalMessage(domain, ev)));
-    return secp256k1.verify(fromHex(ev.sig), digest, pub);
+    if (!secp256k1.verify(fromHex(ev.sig), digest, pub)) return false;
+    if (ev.cert) {
+      const c = ev.cert as DelegationCert;
+      if (c.delegatePub !== ev.pub) return false;                 // cert must bind THIS delegate
+      // DETERMINISTIC expiry: check against the event's OWN authored time (hlc.wall), never
+      // wall-clock-at-fold — else two devices folding the same log at different moments could
+      // disagree and diverge. The fold must be a pure function of the log.
+      const evWall = (ev.hlc && ev.hlc.wall) || 0;
+      if (!verifyCert(domain, c, evWall)) return false;
+      return address(fromHex(c.idPub)) === dev;                   // author = card identity
+    }
+    return address(pub) === dev;                                  // direct: author = signing key
   } catch { return false; }
 }
 

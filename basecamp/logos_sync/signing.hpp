@@ -82,7 +82,16 @@ inline std::string cjson(const json& v) {
     if (v.is_string()) return jsonString(v.get<std::string>());
     if (v.is_number_integer()) return std::to_string(v.get<long long>());
     if (v.is_number_unsigned()) return std::to_string(v.get<unsigned long long>());
-    if (v.is_number_float()) return json(v).dump();
+    // ADR 0017: pin one number rule matching TS `String(n)`. JS has no int/float
+    // distinction, so a whole-valued float (5.0) must canonicalise as "5", not "5.0".
+    // Signed payloads should use integers (the money domain is integer milli); a
+    // non-integral float falls back to a shortest round-trip decimal.
+    if (v.is_number_float()) {
+        double d = v.get<double>();
+        long long ll = (long long)d;
+        if ((double)ll == d) return std::to_string(ll);
+        return json(v).dump();
+    }
     if (v.is_array()) {
         std::string o = "[";
         for (size_t i = 0; i < v.size(); i++) { if (i) o += ","; o += cjson(v[i]); }
