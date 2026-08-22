@@ -84,3 +84,12 @@ The @noble blocker is resolved (loam-sync moved to @noble v2, matching kym). Ste
 crypto.hpp but still a separate file (submoduling the header into the nix module build = step 5, deferred).
 **Still ahead:** steps 2 (HLC Clock), 3 (reconcile), 4 (wire retirement), 5 (C++ submodule), then qaku +
 scala/kith. Deploy: rebuild kym_core .lgx → crib-hub + rebuild mobile APK, then new↔new + device check.
+
+**Step-2 nuance found (2026-08-22):** loam-sync's `Clock.receive()` is already observe-only (take max,
+NO +1 bump) — i.e. it IS kym's `primeFrom` semantics; loam-sync guarantees "next local event sorts after
+the received one" via `send()`'s `ctr+=1` instead. kym's model differs: kym's `receive()` bumps +1 and it
+carries a SEPARATE `primeFrom()`. So the HLC port is a **design reconciliation** (adopt loam-sync's
+receive-based discipline, delete kym's `primeFrom` + the receive bump, rely on `send`), NOT an add-to-loam.
+loam-sync's Clock needs no change. Do it as its own pass gated on kym's convergence tests (the ordering
+change is behavioral). Also reconcile the API: loam-sync `send(nowMs)` injects the clock; kym injects `now`
+in the ctor.
