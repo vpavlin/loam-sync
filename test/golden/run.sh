@@ -3,8 +3,8 @@
 # signing.hpp MUST produce byte-identical canonical for every vector. CI runs this.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-NJ=$(dirname "$(find /nix/store -maxdepth 3 -name json.hpp -path '*nlohmann*' 2>/dev/null | head -1)")/..
-SSL_INC=$(find /nix/store -maxdepth 2 -name opensslv.h -path '*include*' 2>/dev/null | head -1); SSL_INC=${SSL_INC%/openssl/opensslv.h}
+NJ=$(find /nix/store -maxdepth 5 -name json.hpp -path '*nlohmann*/include/nlohmann/*' 2>/dev/null | head -1); NJ=${NJ%/nlohmann/json.hpp}
+SSL_INC=$(find /nix/store -maxdepth 5 -name opensslv.h -path '*include*' 2>/dev/null | head -1); SSL_INC=${SSL_INC%/openssl/opensslv.h}
 SSL_LIB=$(ls -d /nix/store/*openssl*/lib 2>/dev/null | grep -v -- -dev | head -1)
 node test/golden/canonical_ts.mjs > /tmp/lgs_ts.out
 g++ -std=c++17 -w -I"$NJ" -I"$SSL_INC" test/golden/canonical_cpp.cpp -o /tmp/lgs_cpp -L"$SSL_LIB" -lcrypto
