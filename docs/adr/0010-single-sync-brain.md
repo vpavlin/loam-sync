@@ -124,4 +124,4 @@ From `docs/sync-review-2026-08.md`:
 
 ## Directive (2026-08-21, vpavlin)
 
-This ADR is the **primary goal** of the sync-hardening work, not a deferred endpoint: **port kym + qaku onto logos-sync and add anything missing *to logos-sync*, rather than maintaining multiple implementations.** New sync capability lands in logos-sync (TS + C++ parity) and apps consume it; per-app forks (kym/qaku `packages/sync` + the hand-ported C++ mirror) are retired. Wire-affecting steps still ship behind version negotiation and need a device convergence check before the live flip.
+This ADR is the **primary goal** of the sync-hardening work, not a deferred endpoint: **port kym + qaku onto logos-sync and add anything missing *to logos-sync*, rather than maintaining multiple implementations.** New sync capability lands in logos-sync (TS + C++ parity) and apps consume it; per-app forks (kym/qaku `packages/sync` + the hand-ported C++ mirror) are retired. Per ADR 0019 (no pre-1.0 backwards compat) wire-affecting steps are a coordinated breaking cutover — NO version negotiation — but still need a new↔new device convergence check before release.

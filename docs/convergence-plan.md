@@ -17,12 +17,12 @@ logos-sync*; retire per-app implementations. This is ADR-0010, now primary.
 3. **Signature verification in the fold** — port into the reference fold so every consumer gates gated events (`ecdsaVerify` AND `address(pub)==signer`); qaku C++ currently skips it (spoofable).
 4. **Wire helpers** — recursive RBSR catchup (buildInitial/respond/serve) + the sealed-Event envelope as the single wire family; deterministic id-derived nonce (ADR 0011).
 
-## Per-app migration (each behind version negotiation; device convergence check before flip)
+## Per-app migration (coordinated breaking cutover (ADR 0019); verify new↔new + device check)
 **kym / qaku (the ports):**
 - Replace `packages/contract/hlc` with logos-sync `Clock` (adds primeFrom/receive — the #1 fix, already stopgapped in kym).
 - Replace `packages/sync` reconcile/wire/node with logos-sync `reconcile`/`catchup` + the sealed-Event wire; retire the `{type:EVENT}` envelope + whole-log `SYNC_REQ`.
 - Retire the hand-ported C++ mirror; kym_core/qaku_core fold consumes logos-sync `basecamp/logos_sync/*`. App-specific FOLD stays per-app but single-sourced.
-- Keep dual-read for one release: accept both old and new wire; advertise a version; flip once peers (incl. the crib-hub) understand v2.
+- No dual-read (ADR 0019): retire the old wire outright; rebuild all peers incl. the crib-hub together.
 
 **scala / kith (the alignment):** bump to the updated logos-sync; regenerate golden vectors; no wire change beyond the nonce (backward-compatible).
 
