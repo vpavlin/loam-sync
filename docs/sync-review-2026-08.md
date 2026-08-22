@@ -1,0 +1,119 @@
+# Logos sync deep-dive — review of record (2026-08-21)
+
+_Multi-agent review: 8 expert readers (per-app + cold-start/bandwidth/mobile-serving/logos-sync) → adversarial verification → synthesis. 61 findings, 8 verified._
+
+## Executive summary
+
+The review covers four apps (kym, qaku, scala, kith) plus the extracted logos-sync library. The findings collapse into six root causes, most of them shared across apps: (1) the HLC clock is not seeded from the persisted log nor advanced on ingest on several platforms, so last-write-wins silently reverts user edits (kym mobile+desktop, scala desktop); (2) AEAD seal uses a fresh random nonce on every re-serialize, so re-serving an immutable event produces a new Waku message hash the fleet store cannot dedup — the store bloats without bound and cold-start store-pull truncates at the 2500-msg/topic cap, dropping real history; (3) transient control traffic (SYNC_REQ, catchup fp/ids/need, SUMMARY) is published non-ephemeral, so it is stored forever and re-pulled on every cold start, where at least one app re-answers historical requests and triggers a whole-log reconciliation storm; (4) cold-start backfill is fragile and time-boxed — desktop cores have no store-query path, shared-node phones have a stubbed storeSync, and SYNC_REQ/catchup retries are one-shot with no self-heal on peer-up; (5) no node except the fleet can serve history — mobile is Edge-only and cannot answer store queries, so durable backfill hinges on fleet retention or a live peer; (6) four parallel sync stacks exist — scala/kith consume logos-sync, kym/qaku ship bespoke copies plus a hand-maintained C++ mirror — and they have already drifted in load-bearing ways (mobile omits clock.receive and RBSR-on-wire; qaku C++ fold does no signature verification and is spoofable; logos-sync C++ drops delegation certs; canonicalMessage has cross-language parity holes). The good news is that the highest-value fixes are local and non-wire: the HLC seed/receive fix, the deterministic id-derived nonce, and the ephemeral/EVENT-only control-plane guards together resolve most of the cold-start and bandwidth pain safely, before any protocol change. The wire-level convergence onto logos-sync is the strategic endpoint but should land last, staged behind the safe fixes.
+
+## Target architecture
+
+One shared sync brain, one wire family, a durable responder tier.
+
+CRDT/HLC/RBSR core: promote logos-sync to the single source of truth for all four apps. It owns the event-log CRDT fold contract, the HLC (Clock with primeFrom + receive-on-ingest), the XOR range fingerprint, and the recursive RBSR catchup (buildInitial/respond/serve). kym and qaku retire packages/sync, mobile/src/lib/session(s) bespoke paths, and the hand-ported C++ mirror, consuming logos-sync exactly as scala/kith do. The app-specific FOLD stays per-app but is single-source (one implementation compiled to both JS and C++/wasm, or generated golden vectors as a cross-repo CI gate) so mobile and desktop can never diverge again.
+
+Wire: one sealed-Event envelope + recursive RBSR catchup for backfill; retire the {type:EVENT} envelope and the whole-log-reserve SYNC_REQ. Control-plane messages (catchup fp/ids/need, SYNC_REQ) are ephemeral (relayed, never stored, never SDS-retransmitted). Data events are non-ephemeral and sealed with a deterministic nonce = HMAC-SHA256(K, "<app>/nonce/v1|"+event.id)[0:12], so re-serving an immutable event yields byte-identical ciphertext the fleet store dedups (no nonce-reuse risk: one id maps to one immutable plaintext).
+
+HLC discipline everywhere: seed the clock from the full persisted log on boot/join, and call clock.receive(e.hlc) for every ingested event before the next local stamp — on mobile and desktop for all apps.
+
+Cold-start / responder tier: two complementary paths. (a) Store-query bootstrap on platforms that expose it (mobile embedded, and shared-node phones via an AIDL storeQuery proxy) pulls the fleet/hub store first; (b) recursive catchup closes the residual delta and is self-healing — re-triggered on every peer-count-rising / reconnect edge and on a slow periodic tick while the local set reports behind>0, not just the one-shot 0/3/10/25s window. Every household/topic has at least one always-on Core node (the OptiPlex hub) subscribed to the shard that relays and answers backfill non-ephemerally; it is the canonical responder. Catchup gains responder election (jitter + seen-serve suppression) so the hub answers and phones stay quiet, while true phone-to-phone catchup still works when no hub is present — the key advantage of catchup over store-query, which only the fleet can answer.
+
+Identity/admission parity: the fold verifies signatures on every gated/privileged event (ecdsaVerify AND address(pub)==signer, with delegation-cert chaining for Keycard) identically on mobile and desktop before the STRICT flag is flipped; the canonicalMessage contract is byte-identical across TS and C++ and round-trips the cert field losslessly.
+
+## Prioritized fixes
+
+### #1 [M/low] Seed HLC from the log on boot/join and call clock.receive() on every ingest (kym mobile + kym_core + scala desktop)
+**Area:** HLC / ordering  
+Highest-value safe fix: closes silent LWW data-loss where a newer edit reverts under clock skew or same-ms concurrency. Purely local ordering; wire and fold unchanged. Mobile scala already implements the reference pattern (Clock.primeFrom/receive) — port it to kym mobile BudgetContext.ingest, kym_core nextHlc/ingest, and scala_impl applyIncoming/onContextReady. Fold parity note: also restore account.edit `closed` in kym_engine.hpp while touching the fold.
+
+### #2 [M/medium] Derive the AEAD nonce deterministically from event id (all four apps)
+**Area:** crypto / store growth  
+Directly serves both top priorities (cold-start + bandwidth) and is backward-compatible: the nonce still travels on the wire so old readers open new messages unchanged. Re-seals of an immutable event become byte-identical ciphertext the fleet store dedups by hash, so the store stops bloating and cold-start store-pull stops truncating at the 2500-msg cap on duplicates. No nonce-reuse risk because one id maps to one immutable plaintext. Apply in crypto.mjs/crypto.ts + qaku_crypto.hpp/kym equivalents. Risk is medium only because the id must be the true idempotency key everywhere.
+
+### #3 [S/low] Guard storeSync/onEvent to fold EVENT-only and never route store-pulled control messages into respond()/serveLog
+**Area:** bandwidth / msg-rate  
+Stops the cold-start reconciliation storm where a joining device re-pulls historical SYNC_REQ/catchup messages from the store and re-answers them, re-broadcasting its whole log. qaku already guards env.type==='EVENT'; kith and scala do not (kith is strictly worse). Pure local receive-path filter, no wire change, immediate bandwidth+cold-start win.
+
+### #4 [M/low] Make catchup/SYNC_REQ self-healing: re-trigger on peer-up / reconnect edge and periodically while behind>0; add retry to joinByLink
+**Area:** cold-start bootstrap  
+Cold-start is the #1 priority and today backfill is one-shot (0/3/10/25s then never) so a peer that comes online at t=60s or after the known 0-peer node-drop recovers is never re-asked until restart. Hook the setStatus/onStatusChanged Connected edge and a slow tick keyed on the local behind>0 signal; give joinByLink the same retry cadence as onContextReady. Local scheduling change only.
+
+### #5 [M/medium] Implement service-node.storeSync by proxying storeQuery over AIDL to the shared Loam node
+**Area:** cold-start / mobile-serving  
+The shared Loam node is the ecosystem direction, but shared-mode phones currently have a stub storeSync returning {0,0}, so they get history only from finite live catchup — a cold-start regression vs embedded phones. Proxy storeQuery through the AIDL surface so shared-node phones get the same fleet-store pull. Append-only AIDL method per the Loam txn-id ordering rule.
+
+### #6 [M/low] Stand up an always-on store-backed hub per shard as the canonical backfill responder
+**Area:** mobile serving / topology  
+Addresses the mobile-serving priority at the topology level: no phone can answer store queries (Edge, client-only) and desktop cores have no store, so durable history must not depend on public-fleet retention or a peer being awake. Run the always-on hub (OptiPlex box) subscribed to each shard, publishing non-ephemerally and answering backfill; document 'a topic needs at least one always-on Core member' as an explicit requirement. Ops/deployment work, no code protocol change.
+
+### #7 [M/low] Batch cold-start ingest: accumulate a catch-up window, persist+fold once, keep an in-memory id set, debounce change notifications
+**Area:** perf / cold-start  
+Backfill is currently O(N^2): each served event triggers a whole-log read+merge+rewrite plus a full UI re-fold. On a phone over AsyncStorage this dominates cold-start cost. Batch the write, coalesce notifyChange/bookChanged to one refresh per tick, and make dedup O(1). Local perf fix, no wire change (kith first, then generalize to the shared fold).
+
+### #8 [S/low] Fix Edge publish confirmation: treat a successful lightpush as provisional-published and cap retryUnpublished (qaku)
+**Area:** publish confirmation / msg-rate  
+Edge (the mobile default) has no gossipsub mesh gauge, so counters.mesh is permanently 0 and trySend never clears 'queued'; retryUnpublished then re-sends every unconfirmed event each resync cycle. Treat no-throw lightpush as provisional (store-echo remains authoritative) and only retry events older than one resync interval. Cuts redundant sends and fixes the lingering UI badge; local heuristic only.
+
+### #9 [M/medium] Port signature verification into the qaku C++ fold (admitEvents gates gated events on ecdsaVerify AND address(pub)==hlc.dev)
+**Area:** engine / admission parity  
+Security + convergence: desktop/hub currently admits any peer's forged admin.add/answer/moderate because it never binds hlc.dev to the secp256k1 signer, and it diverges from mobile (which drops invalid-signed gated events) from the same merged log. Include qaku_identity.hpp, mirror sigOk, add a golden-vector parity test feeding a forged gated event to both engines. Fold-only change, no wire format change — but the STRICT flag flip is coordinated: flip only after every writer (mobile+desktop+hub) ships the verifying fold.
+
+### #10 [M/medium] Add responder election to catchup: randomized respond delay + suppress-if-already-served
+**Area:** catchup msg-rate  
+Backfill fan-out is O(M*delta) because every holder independently answers buildInitial and broadcasts serves to the whole topic. Add jitter and a seen-serve suppression window so in a hub topic the hub answers and phones fall silent, while phone-to-phone still works with no hub. Timing/behavior change in the shared catchup, not a wire-format change; coordinate the rollout so mixed old/new peers still converge (worst case reverts to today's redundant-but-correct behavior).
+
+### #11 [S/low/WIRE] Send control-plane messages (SYNC_REQ / catchup fp/ids/need / SUMMARY) as ephemeral on both platforms
+**Area:** bandwidth / msg-rate  
+Keeps transient reconciliation traffic out of the fleet store and off SDS retransmit, complementing the EVENT-only pull guard. Requires plumbing an ephemeral flag through publishSealed/sendEvent (mobile real-node hardcodes ephemeral:false) and exposing it on the desktop loam_core/sendSealed path. Wire-touching but backward-compatible — live subscribers still receive relayed control messages, so no flag-day; roll out per app at leisure, senders adopt independently.
+
+### #12 [L/medium/WIRE] Replace whole-log SYNC_REQ re-serve with the RBSR delta path on mobile kym (implement SUMMARY producer/consumer)
+**Area:** cold-start / RBSR  
+Mobile kym implements no SUMMARY/RBSR on the wire — it silently drops SUMMARY and only does whole-log re-serve, so every mobile catch-up is O(N) and the desktop 'Syncing N' indicator can never see mobile-only events. Mirror kym_core's SUMMARY producer/consumer in delivery.ts + BudgetContext, keeping SYNC_REQ as the fallback for old peers. Coordinated rollout: this is a stepping-stone that should be superseded by the logos-sync catchup convergence (fix 13) rather than a long-lived parallel protocol.
+
+### #13 [L/high/WIRE] Converge kym + qaku onto logos-sync: adopt catchup v2 (recursive RBSR) and the raw sealed-Event wire, retire the {type:EVENT} envelope and whole-log reserve
+**Area:** cross-app convergence  
+The strategic endpoint that removes the root cause of the recurring parity bugs: one HLC, one fingerprint, one fold contract, one catchup, shared with scala/kith. This is a coordinated wire change for kym/qaku (envelope AND SYNC_REQ semantics both change) and must be rolled out across mobile+desktop+hub together per app, ideally behind a dual-read/version-negotiation window since kym/qaku and kith/scala wire families are mutually incompatible today. Land last, after the safe fixes have de-risked cold-start and bandwidth. Make the fold single-source (compile-once or CI-gated golden vectors) as part of this.
+
+### #14 [M/medium/WIRE] Port the delegation-cert layer to C++ signing.hpp and round-trip the `cert` field through Event JSON
+**Area:** signing / delegation parity  
+logos-sync C++ verifyEvent rejects any delegated (Keycard) event (pub=delegate != dev=card) and, worse, event.hpp has no cert field so a desktop/hub core silently strips cert on re-serialize — every downstream verifier then rejects the event. This breaks the convergence goal the instant any app enables Keycard custody. Port canonicalCert/verifyCert/cert-aware verifyEvent and add cert to eventFromJson/eventToJson so it round-trips losslessly; consume the existing delegation golden vectors in smoke.cpp. Wire-impacting (cert must round-trip); coordinate so no C++ node is in a delegated topic until it ships. Until then, document delegation as TS-only.
+
+### #15 [M/medium/WIRE] Fix canonicalMessage cross-language parity (drop TS payload||{} coercion; pin a single number-encoding rule) with golden vectors for null/empty/float/large-int
+**Area:** signing canonicalization parity  
+The signing contract diverges on falsy payloads (TS rewrites null/false/0/'' to {} before canonicalizing; C++ canonicalizes the real payload) and on number rendering (JS String() vs nlohmann dump for whole-number floats / large ints / exponents), so cross-platform verify can silently fail. Drop the || {}, pin one documented canonical-number serializer both sides implement byte-identically, and freeze the edge cases in shared golden vectors. Wire/contract change — coordinate before enabling strict signing across platforms.
+
+### #16 [M/low/WIRE] Implement true fingerprint exchange in RBSR (O(diff), not full id-list per summary)
+**Area:** bandwidth / RBSR  
+Even the 'delta' path currently ships the entire event-id set per summary (~50 bytes/UUID) and reconciles locally, so the control plane is O(N) not O(diff). The algorithm already supports interactive range fingerprints — descend/transfer id-lists only for disagreeing ranges. Secondary bandwidth optimization; land after convergence so it is implemented once in logos-sync and mirrored, not in a soon-retired mirror. Wire-touching (new fingerprint round-trip) but compatible if negotiated.
+
+### #17 [L/medium] Bridge waku_store_query into the desktop delivery_module / loam_core so desktop can pull the fleet store on cold start
+**Area:** cold-start  
+Desktop cores have no store fallback at all — a fresh desktop join gets history only if a peer is live inside the retry window. Bridging store-query gives desktop the same store-pull bootstrap as mobile and reduces reliance on the always-on hub. FFI work (append-only AIDL/module surface), no wire-protocol change; larger effort and partly covered operationally by the hub (fix 6), so sequence it after the hub is in place.
+
+### #18 [S/low] Resolve the dead reconcile.hpp ordering trap: delete unused reconcile() range machinery or align its ordering/buckets with catchup and document id-string as the sole wire order
+**Area:** cleanup  
+logos-sync ships an rbsr::reconcile() ordered by (wall,id) with different bucket defaults that nothing on the wire calls — catchup reconciles by id-string only. The XOR fingerprint hides the mismatch today, but it is a convergence landmine for the next person who wires reconcile() up. Keep only fingerprint/Item or align and annotate. Pure library hygiene, do opportunistically.
+
+## ADRs to write
+
+- **Converge all four apps on logos-sync as the single sync brain** — Adopt logos-sync (event-log CRDT fold contract, HLC, XOR fingerprint, recursive RBSR catchup) as the one implementation consumed by scala, kith, kym, and qaku. Deprecate packages/sync, the mobile bespoke delivery/session path, and the hand-maintained C++ mirror. Standardize the wire on a raw sealed-Event envelope + recursive catchup, retiring the kym/qaku {type:EVENT} envelope and whole-log-reserve SYNC_REQ. Make the per-app fold single-source (compile-once to JS+C++/wasm, or golden vectors as a cross-repo CI gate) so mobile and desktop cannot drift. This is a coordinated wire migration rolled out per app across mobile+desktop+hub, staged after the non-wire fixes.
+- **Deterministic id-derived AEAD nonce** — Compute the seal nonce as HMAC-SHA256(K, "<app>/nonce/v1|"+event.id)[0:12] instead of a fresh random nonce, so re-serving an immutable event yields byte-identical ciphertext the fleet store dedups by message hash. The nonce still travels on the wire, so readers are unchanged. Safe because a given id maps to exactly one immutable plaintext, so key+nonce never encrypts two different plaintexts. Apply uniformly across all four apps' crypto ports.
+- **Ephemeral control plane** — All transient reconciliation traffic (SYNC_REQ, catchup fp/ids/need, SUMMARY, and any re-serve intended only for a live peer) is published ephemeral:true so it is never persisted to the fleet store nor SDS-retransmitted. Only durable data events are stored. The receive/store-pull path folds EVENT-type messages only and never routes stored control messages into respond()/serveLog. Backward-compatible: live subscribers still receive relayed control messages, so no flag-day.
+- **HLC clock discipline on all platforms** — Every platform seeds its HLC from the full persisted log on boot/join (primeFrom) and calls clock.receive(e.hlc) for every ingested event before issuing the next local stamp. This is mandatory for mobile and desktop of all four apps to prevent LWW reverts under clock skew and concurrency. The desktop ad-hoc m_wall/m_ctr and kym_core nextHlc are replaced by the shared logos-sync Clock.
+- **Cold-start bootstrap contract** — Cold-start uses store-query bootstrap first (fleet/hub store, on every platform that exposes it — mobile embedded, and shared-node phones via an AIDL storeQuery proxy), then recursive catchup to close the residual delta. Catchup is self-healing: re-triggered on every peer-up/reconnect edge and on a periodic tick while the local set reports behind>0, not just the one-shot startup window. Store-pull is preserved (not replaced) when migrating kym/qaku onto catchup.
+- **Responder topology and always-on store-backed hub** — Every shard/topic requires at least one always-on Core node (the hub) that relays and answers backfill non-ephemerally; it is the canonical responder and its retention must exceed the expected offline window. Phones are Edge and cannot serve store queries, but catchup lets any holder (including a phone) answer peer-to-peer when no hub is present. Catchup gains responder election (jitter + seen-serve suppression) so the hub answers and phones stay quiet in hub topics.
+- **Signature verification and STRICT-mode rollout** — The fold verifies every gated/privileged event on ecdsaVerify AND address(pub)==signer identically on mobile and desktop (currently missing in the qaku C++ fold). Participant events stay open. The STRICT flag (dropping unsigned gated events) is flipped only after every writer — mobile, desktop, and hub — ships the verifying fold, to avoid wholesale cross-platform divergence during rollout. A golden-vector parity test feeding a forged gated event to both engines gates CI.
+- **Cross-language signing contract (delegation cert + canonicalMessage parity)** — The canonicalMessage contract is byte-identical across TS and C++: the TS payload||{} coercion is dropped and a single canonical-number serializer is pinned on both sides. The Event struct round-trips the `cert` field losslessly and C++ verifyEvent chains delegate->cert->identity, so Keycard-delegated events survive passing through a desktop/hub core. Frozen edge cases (null/empty/float/large-int payloads, delegated events) are covered by shared golden vectors exercised on both platforms. Coordinate before enabling delegation or strict signing in any mixed-platform topic.
+- **Tombstone semantics for shared kith/scala fold** — Decide and document whether contact/entry delete is terminal (delete-wins, current v1, convergent but silently drops a causally-newer concurrent edit) or HLC-comparison (a set with HLC greater than the latest del resurrects). If delete-wins is kept, surface it to the authoring device so the user learns their edit was tombstoned. Any change to HLC-compare is a coordinated fold change shared between kith and scala.
+
+## Open questions
+
+- Fold single-sourcing: do we compile one engine to both JS and C++/wasm, or keep separate implementations gated by generated golden vectors in cross-repo CI? The former eliminates drift structurally but is a larger build investment; the latter is what has already silently drifted.
+- Wire migration strategy for kym/qaku onto the logos-sync catchup + raw-Event wire: do we need a dual-read/version-negotiation window (nodes accept both the old {type:EVENT} envelope and the new raw Event during transition), and how do we sequence mobile vs desktop vs hub so no topic splits into non-converging halves?
+- Deterministic-nonce privacy: id-derived nonces make re-serves of the same event byte-identical on the wire, which reveals the re-serve/duplicate pattern to a network observer even though the id itself is encrypted. Is that metadata leak acceptable versus the store-dedup benefit?
+- Fleet/hub store retention sizing: what offline window must we support, and does the fleet retention (or the always-on hub's retention) exceed it? The 2500-msg/topic pull cap needs to be re-evaluated after dedup lands — is newest-first paging or a persisted per-topic cursor/high-watermark also needed?
+- STRICT signature flip and legacy data: do pre-signing unsigned gated events need grandfathering/migration, or are they dropped on flip? What is the concrete gate that confirms every writer (including any long-lived hub) has shipped the verifying fold before we flip?
+- Catchup serve addressing: can the transport address serves to the requester (unicast-style topic) rather than broadcasting to the whole channel? If so, responder election plus addressed serves would cut fan-out further than jitter+suppression alone.
+- Desktop Store capability: do we commit to bridging waku_store_query into the desktop delivery_module/loam_core, or accept the always-on hub as the sole durable desktop backfill source? This changes how much fix 17 is worth.
+- Tombstone product intent (kith/scala): is delete-wins the desired product behavior for shared books/calendars, or is a causally-newer edit expected to survive a concurrent delete? The answer decides whether we ship a UI signal or change fold semantics.
+- Phone-to-phone offline backfill: is it a real product goal (two phones, no hub, never online together)? If yes, that is the BLE mesh bearer's job (ADR 0012) and we must verify catchup actually runs over the mesh route, not only Waku.
