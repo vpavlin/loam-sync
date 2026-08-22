@@ -104,7 +104,19 @@ loam_core owns ONE node THROUGH delivery_module, so the shared-node invariant ho
 of the CRIB migration: upgrade its delivery v0.1.3→v0.2.0 (must still mesh the fleet) and re-verify
 qaku_core+scala (they use delivery_module directly), then add loam_core+ble_mesh + load loam_core.
 
-**⚠️ BLOCKER found (2026-08-22): delivery v0.2.0 does NOT mesh the fleet.** Ran the isolated kym hub with
+**⚠️ BLOCKER found (2026-08-22): delivery v0.2.0 does NOT mesh the fleet.**
+
+**✅ BLOCKER RESOLVED (2026-08-22): it was a CONFIG shape, not a delivery bug — no rebuild.** delivery
+v0.2.0 discovers the fleet via discv5 from the `logos.test` preset and uses the LAYERED createNode shape;
+kym_core hardcoded the FLAT v0.1.3 config (manual entryNodes + bare relay/logLevel) which v0.2.0's strict
+parser rejects, and it never set `discv5-udp-port` so discovery couldn't run (0 peers; the rendezvous
+errors were a red herring). Fix = kym_core sends the canonical config `{mode:Core, preset:logos.test,
+messagingOverrides:{logLevel, tcp-port:30303, discv5-udp-port:9000}}` (no manual entryNodes; commit 0bf2b0e
+on kym `sync-hardening`); loam_core forwards it verbatim. VERIFIED headless: kym_core→loam_core→delivery
+v0.2.0 dials the fleet (peers 3→4, cluster 2), addCategory folds, deterministic-nonce seal sends. delivery
+v0.2.0 HAS reliable channels (added in v0.2.0). Remaining for the crib: qaku_core+scala use delivery
+directly with the same flat config → same one-line canonical-config fix before upgrading the crib delivery
+to v0.2.0 + adding loam_core+ble_mesh. Ran the isolated kym hub with
 the crib's entryNodes (kym_core forwards KYM_DELIVERY_CFG to loam_core.start) → `peers:0` after ~105s;
 delivery logs spew `waku rendezvous requests failed: could not get a peer supporting WakuRendezVousCodec`.
 So v0.2.0 @ 3258cdb0 relies on rendezvous discovery that fails against logos.test, while the crib's v0.1.3
