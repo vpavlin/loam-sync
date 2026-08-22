@@ -8,11 +8,11 @@
 //   address   = "0x" + hex(sha256(pub_compressed_33B)).slice(24,64)
 //   digest    = sha256(utf8(canonical));  sig = secp256k1 ECDSA over digest, compact r‖s, low-S
 //
-// @noble v1 (the Hermes-proven stack): sign(digest, priv) signs the hash directly and
-// returns a Signature (.toCompactHex()); it cross-verifies with the desktop OpenSSL core.
-// (v2 needs {prehash:false} AND misbehaves on Hermes — docs/adr/0008 parity gotcha.)
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { sha256 } from "@noble/hashes/sha256";
+// @noble v2 (aligned ecosystem-wide, ADR 0019): sign(digest, priv, {prehash:false}) signs the
+// 32-byte digest directly and returns a 64B compact r‖s Uint8Array; verify(...,{prehash:false}).
+// Low-S canonical by default; cross-verifies with the desktop OpenSSL core (proven by the golden gate).
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import type { Event } from "./event.js";
 
 const HEXC = "0123456789abcdef";
@@ -72,7 +72,7 @@ export class SoftwareSigner implements Signer {
   private readonly pub: Uint8Array;
   constructor(priv32: Uint8Array) { this.priv = priv32; this.pub = secp256k1.getPublicKey(priv32, true); }
   publicKey(): Uint8Array { return this.pub; }
-  signDigest(d: Uint8Array): Uint8Array { return fromHex(secp256k1.sign(d, this.priv).toCompactHex()); }
+  signDigest(d: Uint8Array): Uint8Array { return secp256k1.sign(d, this.priv, { prehash: false }); }
 }
 
 // An async Signer — same seam, but signDigest may await (a Keycard taps NFC to sign on-card).
@@ -115,7 +115,7 @@ export function verifyCert(domain: string, c: DelegationCert, atMs: number): boo
     if (idPub.length !== 33) return false;
     if (c.notAfter !== 0 && atMs > c.notAfter) return false;
     const digest = sha256(utf8Bytes(canonicalCert(domain, c)));
-    return secp256k1.verify(fromHex(c.idSig), digest, idPub);
+    return secp256k1.verify(fromHex(c.idSig), digest, idPub, { prehash: false });
   } catch { return false; }
 }
 // Issue a cert: the identity signer (the card, on-card) signs the canonical cert. Sync form for
@@ -172,7 +172,7 @@ export function verifyEvent(domain: string, ev: any): boolean {
     if (pub.length !== 33) return false;
     // The event body is always signed by ev.pub (the delegate, or the identity key itself).
     const digest = sha256(utf8Bytes(canonicalMessage(domain, ev)));
-    if (!secp256k1.verify(fromHex(ev.sig), digest, pub)) return false;
+    if (!secp256k1.verify(fromHex(ev.sig), digest, pub, { prehash: false })) return false;
     if (ev.cert) {
       const c = ev.cert as DelegationCert;
       if (c.delegatePub !== ev.pub) return false;                 // cert must bind THIS delegate
