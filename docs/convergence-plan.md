@@ -38,3 +38,29 @@ logos-sync*; retire per-app implementations. This is ADR-0010, now primary.
 3. Port kym onto logos-sync (reference port) behind version negotiation; verify on the hub.
 4. Port qaku; align scala/kith.
 5. Coordinated wire v2 flip after the device convergence check.
+
+## kym port — concrete steps + a blocker found (2026-08-21)
+
+Dependency shape: loam-sync is a real package (`name: loam-sync`, `main: src/index.ts`). kym is an
+npm workspace; `@kym/sync` would add `loam-sync: file:../loam-sync` (TS) + a git submodule of
+`basecamp/logos_sync/` for kym_core (C++), replacing the bespoke copies. No vendoring (ADR 0010).
+
+**BLOCKER — @noble version split:** `@kym/sync` depends on `@noble/hashes`/`@noble/ciphers` **^2.2.0**
+(v2); loam-sync is on **v1** (`@noble/curves ^1.9.7`), deliberately — v1 is Hermes-safe, "v2 needs
+`{prehash:false}` and misbehaves on Hermes" (signing work). Decide before porting:
+- (a) move loam-sync to @noble v2 (re-verify Hermes on a real phone — v2 was avoided for a reason), or
+- (b) keep loam-sync on v1 and pin kym to v1 too (kym currently ships v2 — re-verify kym mobile).
+One @noble major across the ecosystem is the goal; needs a device check either way.
+
+**Steps once the @noble decision is made:**
+1. `@kym/sync`: delete `crypto.mjs` → re-export loam-sync `crypto` (shared seal + deterministic nonce).
+   Update call sites (`mobile/delivery.ts` `seal(id,pt,topic)` → `seal(id,domain,eventId,pt,topic)`) —
+   the event id is the dedup key (ADR 0011).
+2. `packages/contract/hlc.mjs` → loam-sync `Clock` (has primeFrom; retires the kym stopgap).
+3. `packages/sync/reconcile.mjs` → loam-sync `reconcile`/`catchup` (loam-sync's reconcile was lifted
+   from kym's `kym_reconcile_std.hpp`, so likely already equivalent — diff to confirm).
+4. Wire: drop the `{type:EVENT}` envelope + whole-log `SYNC_REQ` (ADR 0019) → sealed-Event + RBSR only.
+5. kym_core: submodule loam-sync `basecamp/logos_sync/`, delete the C++ mirror; the FOLD stays kym's.
+6. Verify: kym JS tests (convergence/sync) + golden gate + load kym_core on the crib-hub + a two-device check.
+
+qaku mirrors this. scala/kith: move to ChaCha (delete AES-GCM) + updated loam-sync.
