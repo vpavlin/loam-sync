@@ -9,6 +9,7 @@
     "test:cpp": "bash test/run.sh"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.3.0",
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.4.0"
   },
