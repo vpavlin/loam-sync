@@ -99,6 +99,17 @@ crypto.hpp but still a separate file (submoduling the header into the nix module
 **Still ahead:** steps 2 (HLC Clock), 3 (reconcile), 4 (wire retirement), 5 (C++ submodule), then qaku +
 scala/kith. Deploy: rebuild kym_core .lgx → crib-hub + rebuild mobile APK, then new↔new + device check.
 
+**Step-3 reconcile VERIFIED EQUIVALENT (2026-08-22) — retirement is a safe pure dedup:** proved kym's
+`packages/sync/reconcile.mjs` == loam-sync's `reconcile` with zero drift: identical fingerprint anchor
+`03e804547dd32e9b71f0d2c78a1279a6` and identical `aNeeds`/`bNeeds`/`rounds`/`controlBytes` across 2000
+random trials (only kym adds a cosmetic `comparisons` counter). The C++ `kym_reconcile_std.hpp` produces the
+same anchor too → reconcile is byte-identical across kym-JS / loam-sync-JS / C++. So the actual file-
+retirement carries no behavioral risk; it's deferred only because it needs (a) loam-sync node packaging (a
+`dist` build — raw-TS consumption breaks in node: modules with sibling `./x.js` imports like reconcile/
+event/merge don't resolve under node's type-stripping, unlike crypto which imports no siblings) for the JS
+side, and (b) the C++ submodule step. Note `packages/sync` is largely a reference/test impl (the real
+runtimes are mobile's vendored copy + kym_core C++), so its convergence is lower-impact than crypto's.
+
 **Step-2 nuance found (2026-08-22):** loam-sync's `Clock.receive()` is already observe-only (take max,
 NO +1 bump) — i.e. it IS kym's `primeFrom` semantics; loam-sync guarantees "next local event sorts after
 the received one" via `send()`'s `ctr+=1` instead. kym's model differs: kym's `receive()` bumps +1 and it
