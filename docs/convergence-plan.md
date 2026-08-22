@@ -64,3 +64,23 @@ One @noble major across the ecosystem is the goal; needs a device check either w
 6. Verify: kym JS tests (convergence/sync) + golden gate + load kym_core on the crib-hub + a two-device check.
 
 qaku mirrors this. scala/kith: move to ChaCha (delete AES-GCM) + updated loam-sync.
+
+## PROGRESS — 2026-08-22 (kym crypto convergence DONE + verified)
+
+The @noble blocker is resolved (loam-sync moved to @noble v2, matching kym). Step 1 (crypto) is
+**complete and verified byte-identical across all five surfaces**, on branch `sync-hardening`:
+- `packages/sync/crypto.mjs` → thin wrapper over loam-sync `crypto` (domain="kym"), `seal(id,eventId,pt,topic)`;
+  `node.mjs` threads `event.id`. Verified: 4/4 sync + 44/44 engine tests; same-id seals byte-identical,
+  distinct-id differ, roundtrips; **backward-compatible** (loam-sync `deriveIdentity("kym")` derives the
+  SAME topic/keys as the old crypto, cross-open both ways — old hub reads new msgs, new reads old).
+- `mobile/src/lib/identity.ts` → deterministic id-nonce (Metro can't bundle out-of-tree loam-sync on an
+  Expo export, so the phone keeps an algorithm-identical vendored copy); `delivery.ts` threads `event.id`,
+  ephemeral SYNC_REQ gets a fresh random seed. Verified mobile seal == packages seal byte-for-byte.
+- `kym_core/src/kym_crypto.hpp` gains `nonceFor(id,eventId)`; `sealAndSend()` uses it. Verified: a C++
+  harness compiling kym_crypto.hpp emits the exact same topic + sealed bytes (`2d1d6c0b…507b0a71`) as the
+  loam-sync TS seal → kym_core == phone == packages == loam-sync (TS + C++) all seal identically.
+
+**Not yet a full delete of the mirror:** kym_crypto.hpp is now algorithm-identical to loam-sync
+crypto.hpp but still a separate file (submoduling the header into the nix module build = step 5, deferred).
+**Still ahead:** steps 2 (HLC Clock), 3 (reconcile), 4 (wire retirement), 5 (C++ submodule), then qaku +
+scala/kith. Deploy: rebuild kym_core .lgx → crib-hub + rebuild mobile APK, then new↔new + device check.
