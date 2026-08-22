@@ -104,6 +104,15 @@ loam_core owns ONE node THROUGH delivery_module, so the shared-node invariant ho
 of the CRIB migration: upgrade its delivery v0.1.3→v0.2.0 (must still mesh the fleet) and re-verify
 qaku_core+scala (they use delivery_module directly), then add loam_core+ble_mesh + load loam_core.
 
+**⚠️ BLOCKER found (2026-08-22): delivery v0.2.0 does NOT mesh the fleet.** Ran the isolated kym hub with
+the crib's entryNodes (kym_core forwards KYM_DELIVERY_CFG to loam_core.start) → `peers:0` after ~105s;
+delivery logs spew `waku rendezvous requests failed: could not get a peer supporting WakuRendezVousCodec`.
+So v0.2.0 @ 3258cdb0 relies on rendezvous discovery that fails against logos.test, while the crib's v0.1.3
+dials entryNodes and meshes (the fleet-working build). The crib migration is blocked on this until a
+v0.2.0 config that meshes is found (static peers?) or loam_core is built against a fleet-working delivery.
+Loading/authoring/sealing/local-send all work on v0.2.0 (tx increments) — only fleet PEERING fails, so the
+crypto + module verification stands; it's purely a transport-connectivity gap.
+
 **Not yet a full delete of the mirror:** kym_crypto.hpp is now algorithm-identical to loam-sync
 crypto.hpp but still a separate file (submoduling the header into the nix module build = step 5, deferred).
 **Still ahead:** steps 2 (HLC Clock), 3 (reconcile), 4 (wire retirement), 5 (C++ submodule), then qaku +
