@@ -80,6 +80,20 @@ The @noble blocker is resolved (loam-sync moved to @noble v2, matching kym). Ste
   harness compiling kym_crypto.hpp emits the exact same topic + sealed bytes (`2d1d6c0b…507b0a71`) as the
   loam-sync TS seal → kym_core == phone == packages == loam-sync (TS + C++) all seal identically.
 
+**HUB DEPLOY BLOCKED by an orthogonal migration (found 2026-08-22):** rebuilt kym_core 0.7.5 cleanly
+(my crypto change compiles in the full module build), but it **won't load in the crib-hub**: the current
+kym_core SOURCE declares `dependencies: ["loam_core"]` (migrated to the loam_core facade), whereas the
+deployed hub runs the pre-migration **0.7.4** (`dependencies: ["delivery_module"]`) and the crib profile
+loads `delivery_module` directly (one shared node for kym+qaku+scala), NOT `loam_core`. So `logos-hub`
+returns `MODULE_LOAD_FAILED` (unresolved dep) — NOT a fault of the crypto change (dlopen succeeds, hashes
+match once repacked via the `install-portable` nix output). qaku_core + scala are still on `delivery_module`
+too. Rolled the hub back to the working 0.7.4. Deploying the new crypto to the hub is gated on the
+**loam_core hub migration** (add loam_core to the crib profile while preserving ONE shared node + version-
+align it with what kym_core 0.7.5 was built against) — a separate task. And since the deterministic-nonce
+dedup only pays off when ALL publishers use it, the hub + phone must be redeployed together anyway.
+Rebuild recipe for later: `nix build .#packages.x86_64-linux.install-portable` → deploy the whole
+`modules/kym_core/` dir (so+manifest+variant+bundled libs; the manifest carries the Merkle hashes).
+
 **Not yet a full delete of the mirror:** kym_crypto.hpp is now algorithm-identical to loam-sync
 crypto.hpp but still a separate file (submoduling the header into the nix module build = step 5, deferred).
 **Still ahead:** steps 2 (HLC Clock), 3 (reconcile), 4 (wire retirement), 5 (C++ submodule), then qaku +
