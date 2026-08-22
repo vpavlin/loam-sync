@@ -243,4 +243,67 @@ inline bool verifyEvent(const std::string& domain, const Event& e) {
 // compat, but never counts as an authenticated author.
 inline bool isSigned(const Event& e) { return !e.sig.empty(); }
 
+// ── delegation certs (docs/adr/0009 custody; ADR 0017 signing parity) ─────────
+// C++ mirror of the TS layer in signing.ts. The card identity (idPub) signs — on card —
+// a cert authorising an ephemeral delegate key to author events; a verifier checks the
+// idSig over canonicalCert and expiry. maxSigs/scope are FOLD-enforced (docs/adr/0007).
+struct DelegationCert {
+    std::string delegatePub;  // hex compressed 33B — the key that signs events
+    std::string idPub;        // hex compressed 33B — the card identity key
+    long long   notAfter = 0; // unix ms; 0 = never expires
+    long long   maxSigs  = 0; // 0 = unlimited (fold-enforced)
+    std::string scope;        // "" = any container (fold-enforced)
+    std::string idSig;        // hex 64B ECDSA by idPub over canonicalCert
+};
+
+inline std::string canonicalCert(const std::string& domain, const DelegationCert& c) {
+    return domain + "-deleg-v1|" + c.delegatePub + "|" + c.idPub + "|"
+         + std::to_string(c.notAfter) + "|" + std::to_string(c.maxSigs) + "|" + c.scope;
+}
+
+// Verify the cert's identity signature and non-expiry at `atMs`. Does NOT check
+// maxSigs/scope — those are count/scope-dependent and belong in the fold.
+inline bool verifyCert(const std::string& domain, const DelegationCert& c, long long atMs) {
+    if (c.delegatePub.empty() || c.idPub.empty() || c.idSig.empty()) return false;
+    Bytes idPub = fromHexB(c.idPub);
+    if (idPub.size() != 33) return false;
+    if (c.notAfter != 0 && atMs > c.notAfter) return false;
+    Bytes digest = sha256b(strBytes(canonicalCert(domain, c)));
+    Bytes sig = fromHexB(c.idSig);
+    if (sig.size() != 64) return false;
+    return ecdsaVerify(idPub, digest, sig);
+}
+
+// Issue a cert: the identity signer signs the canonical cert (SoftwareSigner or an
+// on-card signer via the Signer seam).
+inline DelegationCert issueCert(const Signer& idSigner, const std::string& domain,
+                                const std::string& delegatePub, long long notAfter = 0,
+                                long long maxSigs = 0, const std::string& scope = "") {
+    DelegationCert c;
+    c.delegatePub = delegatePub;
+    Bytes idPub = idSigner.publicKey();
+    c.idPub = toHexS(idPub.data(), idPub.size());
+    c.notAfter = notAfter; c.maxSigs = maxSigs; c.scope = scope;
+    Bytes digest = sha256b(strBytes(canonicalCert(domain, c)));
+    Bytes sig = idSigner.signDigest(digest);
+    c.idSig = toHexS(sig.data(), sig.size());
+    return c;
+}
+
+// Round-trip the cert through an event's `cert` JSON field (byte-compatible with TS).
+inline bool certFromJson(const json& j, DelegationCert& c) {
+    if (!j.is_object()) return false;
+    c.delegatePub = j.value("delegatePub", std::string());
+    c.idPub       = j.value("idPub", std::string());
+    c.notAfter    = j.value("notAfter", (long long)0);
+    c.maxSigs     = j.value("maxSigs", (long long)0);
+    c.scope       = j.value("scope", std::string());
+    c.idSig       = j.value("idSig", std::string());
+    return !c.delegatePub.empty();
+}
+inline json certToJson(const DelegationCert& c) {
+    return json{{"delegatePub", c.delegatePub}, {"idPub", c.idPub}, {"notAfter", c.notAfter},
+                {"maxSigs", c.maxSigs}, {"scope", c.scope}, {"idSig", c.idSig}};
+}
+
 } // namespace logos_sync
