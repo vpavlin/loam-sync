@@ -41,3 +41,9 @@ the app owns the keys and the meaning.**
 - The eventual **MLS** membership-security upgrade (forward secrecy, re-key on member
   removal) slots in at the *crypto* seam in the app, not inside logos-sync — it is a
   seal/open concern, orthogonal to reconciliation.
+
+---
+
+## Superseded in part by ADR 0011 (2026-08-21)
+
+The **seal/open (AEAD envelope)** is now IN scope for loam-sync — `src/crypto.ts` + `basecamp/logos_sync/crypto.hpp`. Reversed because it was duplicated (and drifting) across every app (`packages/sync/crypto.mjs`, per-app C++), and the deterministic id-derived nonce (ADR 0011) must land ONCE, not per-fork (ADR 0010 directive: add missing capability to loam-sync, don't maintain multiple implementations). **Transport stays out of scope** (logos-transport/loam moves bytes); only the household seal moved in. Key derivation is domain-parameterised so each app's existing keys are unchanged (backward-compatible).

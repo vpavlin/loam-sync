@@ -111,3 +111,7 @@ From the 2026-08 sync review (`docs/sync-review-2026-08.md`):
   store-bloat and cold-start-truncation pain before any wire-protocol change.
 - **ADR 0015 (Crypto and transport are out of scope).** The seal itself stays app-side;
   this ADR standardizes *how* each app derives its nonce, not where sealing happens.
+
+## Note
+
+This brings the seal INTO loam-sync (`crypto.ts`/`crypto.hpp`), partially **superseding ADR 0006** ("crypto out of scope") — the seal was duplicated per app and the deterministic nonce must be single-sourced. Transport remains out of scope.
