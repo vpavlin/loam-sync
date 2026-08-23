@@ -31,13 +31,17 @@ export function compareHlc(a: HLC, b: HLC): number {
 }
 
 /** Stamps local events and advances past ingested ones. Prime it from your whole
- *  log on load, and call receive() for every event you ingest (docs/adr/0002). */
+ *  log on load, and call receive() for every event you ingest (docs/adr/0002).
+ *
+ *  send() takes the wall time explicitly (`send(nowMs)`) OR uses the clock's own
+ *  time source when called with no argument (`send()`) — the source is injectable
+ *  via the constructor (default Date.now), which keeps tests deterministic. */
 export class Clock {
   private wall = 0;
   private ctr = 0;
-  constructor(private readonly dev: string) {}
+  constructor(private readonly dev: string, private readonly now: () => number = () => Date.now()) {}
 
-  send(nowMs: number): HLC {
+  send(nowMs: number = this.now()): HLC {
     if (nowMs > this.wall) {
       this.wall = nowMs;
       this.ctr = 0;
@@ -47,6 +51,7 @@ export class Clock {
     return { wall: this.wall, ctr: this.ctr, dev: this.dev };
   }
 
+  /** Observe a received event's HLC (no counter bump — send() owns the bump). */
   receive(h: HLC): void {
     if (h.wall > this.wall) {
       this.wall = h.wall;
@@ -54,5 +59,13 @@ export class Clock {
     } else if (h.wall === this.wall) {
       this.ctr = Math.max(this.ctr, h.ctr);
     }
+  }
+
+  /** Prime from an existing log at boot/join so the next send() sorts after every
+   *  event already held. Observe-only (take the max), equivalent to receive() over
+   *  each event's HLC. Call once after loading the persisted log. */
+  primeFrom(log: Array<{ hlc?: HLC }>): this {
+    for (const e of log || []) if (e && e.hlc) this.receive(e.hlc);
+    return this;
   }
 }
