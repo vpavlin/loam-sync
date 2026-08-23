@@ -1,17 +1,37 @@
 {
   "name": "loam-sync",
   "version": "0.3.0",
-  "description": "Shared, transport-agnostic sync engine for multi-writer Logos apps — event-log CRDT + HLC + RBSR reconciliation + catch-up protocol.",
+  "description": "Shared, transport-agnostic sync engine for multi-writer Logos apps \u2014 event-log CRDT + HLC + RBSR reconciliation + catch-up protocol.",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "scripts": {
     "test": "node test/convergence.test.mjs",
-    "test:cpp": "bash test/run.sh"
+    "test:cpp": "bash test/run.sh",
+    "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@noble/ciphers": "^2.3.0",
     "@noble/curves": "^2.3.0",
     "@noble/hashes": "^2.3.0"
   },
-  "license": "(MIT OR Apache-2.0)"
+  "license": "(MIT OR Apache-2.0)",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/crypto.d.ts",
+      "default": "./dist/crypto.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "basecamp"
+  ],
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
 }
