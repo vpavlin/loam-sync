@@ -10,8 +10,16 @@ export { type CatchupMsg, type Step, buildInitial, respond } from "./catchup.js"
 // storage + RNG and injects a Signer; the library never holds a private key.
 export {
   type Signer, type AsyncSigner, SoftwareSigner, signEvent, signEventAsync, verifyEvent, isSigned,
-  canonicalMessage, address, hex, fromHex, utf8Bytes,
+  canonicalMessage, cjson, address, hex, fromHex, utf8Bytes,
 } from "./signing.js";
+// Log snapshots to content-addressed Storage (docs/adr/0020): bootstrap a joining device from one
+// deterministic sealed blob instead of hundreds of relayed messages; RBSR-tail the delta. Bring your
+// own Storage (Codex) + a deterministic Sealer (cryptoSealer builds one from the household key).
+export {
+  type Storage, type Sealer, type SnapshotPointer, cryptoSealer,
+  epochBoundary, boundaryHlc, selectCut, serializeSnapshot, parseSnapshot,
+  writeSnapshot, readSnapshot, bestPointer,
+} from "./snapshot.js";
 // Optional Keycard-custody layer (docs/adr/0009) — a card identity delegates bounded off-card
 // signing to an ephemeral key via an on-card cert; verify chains delegate→cert→identity. The
 // concrete hardware signer lives in loam-keycard; this is the wire + verify spine (C++ parity).

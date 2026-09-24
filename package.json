@@ -1,6 +1,6 @@
 {
   "name": "loam-sync",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Shared, transport-agnostic sync engine for multi-writer Logos apps \u2014 event-log CRDT + HLC + RBSR reconciliation + catch-up protocol.",
   "type": "module",
   "main": "dist/index.js",
