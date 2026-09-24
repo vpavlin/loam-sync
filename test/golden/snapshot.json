@@ -1,0 +1,104 @@
+{
+  "log": [
+    {
+      "v": 1,
+      "id": "e3",
+      "type": "note.put",
+      "hlc": {
+        "wall": 300,
+        "ctr": 0,
+        "dev": "0xA"
+      },
+      "dev": "0xA",
+      "payload": {
+        "title": "third",
+        "nested": {
+          "b": 2,
+          "a": 1
+        },
+        "arr": [
+          3,
+          1,
+          2
+        ]
+      },
+      "pub": "02aa",
+      "sig": "cc33"
+    },
+    {
+      "v": 1,
+      "id": "e1",
+      "type": "note.put",
+      "hlc": {
+        "wall": 10,
+        "ctr": 0,
+        "dev": "0xA"
+      },
+      "dev": "0xA",
+      "payload": {
+        "title": "first",
+        "n": 1,
+        "flag": true
+      },
+      "pub": "02aa",
+      "sig": "aa11"
+    },
+    {
+      "v": 1,
+      "id": "e2",
+      "type": "note.put",
+      "hlc": {
+        "wall": 120,
+        "ctr": 0,
+        "dev": "0xB"
+      },
+      "dev": "0xB",
+      "payload": {
+        "z": null,
+        "title": "second"
+      },
+      "pub": "03bb",
+      "sig": "bb22"
+    },
+    {
+      "v": 1,
+      "id": "e4",
+      "type": "note.del",
+      "hlc": {
+        "wall": 999,
+        "ctr": 0,
+        "dev": "0xB"
+      },
+      "dev": "0xB",
+      "payload": {
+        "id": "e1"
+      }
+    },
+    {
+      "v": 1,
+      "id": "e5",
+      "type": "note.put",
+      "hlc": {
+        "wall": 1000,
+        "ctr": 0,
+        "dev": "0xA"
+      },
+      "dev": "0xA",
+      "payload": {
+        "title": "excluded-on-boundary"
+      },
+      "pub": "02aa",
+      "sig": "dd44"
+    }
+  ],
+  "epochSizeMs": 1000,
+  "now": 1500,
+  "boundary": 1000,
+  "cutIds": [
+    "e1",
+    "e2",
+    "e3",
+    "e4"
+  ],
+  "serialized": "{\"count\":4,\"coversUpToHlc\":{\"ctr\":0,\"dev\":\"\",\"wall\":1000},\"events\":[{\"dev\":\"0xA\",\"hlc\":{\"ctr\":0,\"dev\":\"0xA\",\"wall\":10},\"id\":\"e1\",\"payload\":{\"flag\":true,\"n\":1,\"title\":\"first\"},\"pub\":\"02aa\",\"sig\":\"aa11\",\"type\":\"note.put\",\"v\":1},{\"dev\":\"0xB\",\"hlc\":{\"ctr\":0,\"dev\":\"0xB\",\"wall\":120},\"id\":\"e2\",\"payload\":{\"title\":\"second\",\"z\":null},\"pub\":\"03bb\",\"sig\":\"bb22\",\"type\":\"note.put\",\"v\":1},{\"dev\":\"0xA\",\"hlc\":{\"ctr\":0,\"dev\":\"0xA\",\"wall\":300},\"id\":\"e3\",\"payload\":{\"arr\":[3,1,2],\"nested\":{\"a\":1,\"b\":2},\"title\":\"third\"},\"pub\":\"02aa\",\"sig\":\"cc33\",\"type\":\"note.put\",\"v\":1},{\"dev\":\"0xB\",\"hlc\":{\"ctr\":0,\"dev\":\"0xB\",\"wall\":999},\"id\":\"e4\",\"payload\":{\"id\":\"e1\"},\"type\":\"note.del\",\"v\":1}],\"v\":1}"
+}

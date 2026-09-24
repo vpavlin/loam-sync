@@ -6,6 +6,8 @@ NLO=$(find /nix/store -maxdepth 4 -path "*nlohmann/json.hpp" 2>/dev/null | head 
 INC=""; [ -n "$NLO" ] && INC="-I$(dirname "$(dirname "$NLO")")"
 echo "== C++ smoke =="
 c++ -std=c++17 $INC test/smoke.cpp -lcrypto -o /tmp/logos_sync_smoke && /tmp/logos_sync_smoke
+echo "== C++ snapshot parity (ADR 0020) =="
+c++ -std=c++17 $INC test/snapshot_parity.cpp -lcrypto -o /tmp/logos_sync_snap && /tmp/logos_sync_snap
 echo "== TS convergence =="
 node test/convergence.test.mjs
 echo "== TS snapshot (ADR 0020) =="
