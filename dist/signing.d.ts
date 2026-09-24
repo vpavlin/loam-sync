@@ -3,6 +3,7 @@ export declare function hex(b: Uint8Array): string;
 export declare function fromHex(s: string): Uint8Array;
 export declare function utf8Bytes(s: string): Uint8Array;
 export declare function address(pubCompressed: Uint8Array): string;
+export declare function cjson(v: any): string;
 export declare function canonicalMessage(domain: string, ev: any): string;
 export interface Signer {
     publicKey(): Uint8Array;

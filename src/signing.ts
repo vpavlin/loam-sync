@@ -40,8 +40,10 @@ export function utf8Bytes(s: string): Uint8Array {
 // keccak, so OpenSSL and @noble derive it byte-identically).
 export function address(pubCompressed: Uint8Array): string { return "0x" + hex(sha256(pubCompressed)).slice(24, 64); }
 
-// Deterministic canonical form of an event's SIGNED fields (everything except pub/sig).
-function cjson(v: any): string {
+// Deterministic canonical JSON: keys sorted recursively, no whitespace. Byte-identical to the
+// C++ `cjson` (docs/adr/0017). Exported so snapshots (ADR 0020) serialize deterministically with
+// the SAME canonicaliser the signature uses — cross-language-ready by construction.
+export function cjson(v: any): string {
   if (v === null || v === undefined) return "null";
   if (Array.isArray(v)) return "[" + v.map(cjson).join(",") + "]";
   if (typeof v === "object") { const ks = Object.keys(v).sort(); return "{" + ks.map((k) => JSON.stringify(k) + ":" + cjson(v[k])).join(",") + "}"; }
